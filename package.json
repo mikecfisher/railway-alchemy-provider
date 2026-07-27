@@ -1,0 +1,79 @@
+{
+  "name": "railway-alchemy-provider",
+  "version": "0.1.0",
+  "description": "Railway resources for Alchemy v2",
+  "keywords": [
+    "alchemy",
+    "effect",
+    "infrastructure-as-code",
+    "railway",
+    "typescript"
+  ],
+  "author": "Mike Fisher",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mikecfisher/railway-alchemy-provider.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mikecfisher/railway-alchemy-provider/issues"
+  },
+  "homepage": "https://github.com/mikecfisher/railway-alchemy-provider#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "packageManager": "bun@1.3.14",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
+    }
+  },
+  "scripts": {
+    "build": "rm -rf ./dist && bun run build:js && bun run build:types",
+    "build:js": "tsc -p tsconfig.emit.json",
+    "build:types": "tsc -p tsconfig.build.json",
+    "check": "bun run typecheck && bun run check:vendor && bun run diagnostics && bun run test && bun run build && bun run check:package && bun run check:example",
+    "check:example": "tsc -p examples/tsconfig.json",
+    "check:package": "npm_config_ignore_scripts=true publint --pack=npm --strict",
+    "check:vendor": "bun scripts/verify-effect-vendor.ts",
+    "diagnostics": "chmod +x node_modules/@effect/tsgo-*/lib/tsc && effect-tsgo diagnostics --project tsconfig.json",
+    "test": "bun test ./test/*.test.ts",
+    "prepack": "bun run check",
+    "release:verify": "bun scripts/verify-release.ts",
+    "test:acceptance": "CI=1 RAILWAY_ACCEPTANCE=1 bun test --timeout 600000 ./test/acceptance/*.test.ts",
+    "typecheck": "effect-tsgo patch --typescript-package typescript && tsc -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "@effect/platform-bun": "4.0.0-beta.102",
+    "@effect/platform-node": "4.0.0-beta.102",
+    "alchemy": "2.0.0-beta.64",
+    "effect": "4.0.0-beta.102"
+  },
+  "devDependencies": {
+    "@effect/language-service": "0.87.1",
+    "@effect/platform-bun": "4.0.0-beta.102",
+    "@effect/platform-node": "4.0.0-beta.102",
+    "@effect/tsgo": "0.24.3",
+    "@types/bun": "1.3.14",
+    "alchemy": "2.0.0-beta.64",
+    "effect": "4.0.0-beta.102",
+    "publint": "0.3.22",
+    "typescript": "7.0.2"
+  }
+}

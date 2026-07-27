@@ -1,0 +1,84 @@
+name: Bug report
+description: Report reproducible provider behavior
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include tokens, variable values, `.alchemy` state, or private
+        Railway response payloads. Use private vulnerability reporting for
+        security issues.
+  - type: input
+    id: provider-version
+    attributes:
+      label: Provider version
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: dependency-versions
+    attributes:
+      label: Alchemy and Effect versions
+      placeholder: alchemy 2.0.0-beta.64, effect 4.0.0-beta.102
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: Runtime and operating system
+      placeholder: Bun 1.3.14 on macOS 26
+    validations:
+      required: true
+  - type: dropdown
+    id: token-type
+    attributes:
+      label: Railway token type
+      options:
+        - Account token
+        - Workspace token
+        - Stored Alchemy token
+        - Unknown
+    validations:
+      required: true
+  - type: dropdown
+    id: lifecycle
+    attributes:
+      label: Lifecycle phase
+      options:
+        - Authentication
+        - Plan
+        - Create
+        - Update or drift repair
+        - Adoption
+        - Deployment
+        - Destroy
+        - Package installation or import
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include a sanitized stack and exact commands.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include only sanitized errors.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: I removed credentials, variable values, state, and private payloads.
+          required: true

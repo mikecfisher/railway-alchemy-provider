@@ -1,0 +1,25 @@
+version: 2
+updates:
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      effect-and-alchemy:
+        patterns:
+          - alchemy
+          - effect
+          - "@effect/*"
+      development-tooling:
+        dependency-type: development
+        exclude-patterns:
+          - alchemy
+          - effect
+          - "@effect/*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

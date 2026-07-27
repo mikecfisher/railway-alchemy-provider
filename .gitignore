@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+.alchemy/
+.env
+.env.*
+!.env.example
+!CLAUDE.md
+*.tgz
+*.log
+.DS_Store

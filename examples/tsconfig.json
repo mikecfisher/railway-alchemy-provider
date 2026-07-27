@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": []
+  },
+  "include": ["./existing-project.ts"],
+  "exclude": ["../repos", "../test", "../src"]
+}

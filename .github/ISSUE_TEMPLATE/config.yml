@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/mikecfisher/railway-alchemy-provider/security/advisories/new
+    about: Report vulnerabilities privately.
+  - name: Railway documentation
+    url: https://docs.railway.com/integrations/api
+    about: Check Railway API behavior and token requirements.
+  - name: Alchemy documentation
+    url: https://alchemy.run/infrastructure-as-code/custom-provider/
+    about: Check Alchemy provider and lifecycle behavior.
