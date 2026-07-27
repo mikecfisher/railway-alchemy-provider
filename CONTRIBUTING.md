@@ -28,7 +28,9 @@ bun install --frozen-lockfile
 bun run check
 ```
 
-The project vendors the exact supported Effect source under `repos/effect`.
+The project vendors the supported Effect source under `repos/effect` for
+diagnostics. Its package-manager lockfile is intentionally excluded because
+the vendored workspace is never installed or shipped.
 Treat it as read-only reference material. When intentionally updating Effect,
 update the package pins and vendored source together; `bun run check:vendor`
 enforces their version match.

@@ -1,4 +1,5 @@
 node_modules/
+repos/effect/pnpm-lock.yaml
 dist/
 coverage/
 .alchemy/
