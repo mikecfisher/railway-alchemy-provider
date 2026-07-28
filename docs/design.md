@@ -1,135 +1,105 @@
 # Design
 
-This document describes the implemented v0.1 architecture. It is the
-maintainer-facing source of truth for lifecycle and ownership decisions.
+This is the maintainer-facing source of truth for v0.2 ownership and lifecycle
+decisions.
 
-## Scope
-
-The provider manages a Docker-image Railway service inside an existing project
-and environment. It intentionally does not own the project or environment.
+## Resource model
 
 ```text
-ExistingProject (read-only reference)
-└── Service (owned after create or explicit adoption)
-    ├── service identity and Docker image
-    ├── environment-specific deployment settings
-    ├── selected variables
-    ├── optional Railway public domain
-    └── deployment status
+ExistingProject (read-only)
+├── Environment (owned)
+│   └── Service
+└── Service
+    ├── ServiceVariable
+    └── CustomDomain
+
+ExistingProject or Environment
+└── SharedVariable
 ```
 
-Railway separates a project-level `Service` identity from its
-environment-specific `ServiceInstance`. The client adapter normalizes both into
-one provider snapshot while retaining project, environment, and service IDs for
-every operation.
+Railway separates a project-level service identity from each
+environment-specific service instance. `RailwayClient` normalizes both into one
+snapshot while every mutation retains project, environment, and service scope.
 
-## Resource lifecycle
+## Lifecycle rules
 
-Each resource is a typed Alchemy `Resource` with an Effect provider.
+- All inputs are decoded with Effect Schema before use.
+- Every plan reads Railway; state is identity/ownership, not the source of
+  observed truth.
+- Cold exact-name discovery returns `Unowned`.
+- Multiple exact matches fail with `RailwayAmbiguousMatch`.
+- Scope/identity changes replace; observable settings converge in place.
+- Deletes are scoped by stable IDs and tolerate already-missing resources.
+- Boolean Railway mutations must return `true`; `false` is a typed API error.
+- Query transport retries bounded transient failures; mutations never retry.
 
-`ExistingProject`:
+`ExistingProject` never mutates or deletes Railway. `Environment`, `Service`,
+`SharedVariable`, `ServiceVariable`, and `CustomDomain` are owned after create
+or explicit adoption and are deleted on stack destruction.
 
-1. Decodes the requested project and environment IDs.
-2. Reads both objects from Railway.
-3. Returns their live names and stable IDs.
-4. Never mutates or deletes either object.
+## Services
 
-`Service` uses one observe-and-converge lifecycle for create, update, retry,
-drift repair, and adoption:
+`Service` supports mutually exclusive Docker image and GitHub repository
+sources. Repository services also own their deployment trigger. The normalized
+snapshot observes source, branch, deployment settings, selected variables,
+generated Railway domain, and latest deployment.
 
-1. Read the tracked service ID when Alchemy state contains one.
-2. Create the service when no tracked live service exists.
-3. Synchronize only drifted settings.
-4. Upsert desired managed variables.
-5. Delete only variables previously managed by this resource and now removed
-   from the desired input.
-6. Create or remove the Railway-generated domain.
-7. Deploy only when required and wait for a terminal result.
-8. Return a fresh, secret-free snapshot.
+Reconciliation:
 
-Deletion removes the Railway service and treats an already-missing service as
-success.
+1. Read by tracked ID or create.
+2. Update source, trigger, and drifted service-instance settings.
+3. Reconcile only variables owned by `Service.variables`.
+4. Reconcile the generated Railway domain and target port.
+5. Deploy when creation/settings/variables require it or health is not
+   `SUCCESS`.
+6. Wait on a bounded Effect schedule and return a fresh snapshot.
 
-## Adoption and ownership
+First-class variable resources mutate only their single named key. Teams should
+not assign the same key to both the bulk and first-class ownership models.
 
-An exact-name service discovered without Alchemy state is returned as
-`Unowned`. Alchemy will not manage it unless the stack explicitly enables
-adoption.
+## Secrets
 
-Adoption is intentionally consequential: after adoption, stack destruction
-deletes that Railway service. Project and environment references remain
-read-only in every lifecycle.
+Resolved credentials are `Redacted<string>`. GraphQL errors redact the
+credential and all string variable values. Variable resource outputs contain
+identity and name only.
 
-Name matching is exact and succeeds only when there is one live match. The
-provider does not infer ownership from a partial or ambiguous display name.
-
-## Variables and state
-
-`Service.variables` is a resource-owned subset of the Railway variable
-collection:
-
-- desired keys are created or repaired;
-- previously managed keys removed from the desired input are deleted;
-- unrelated Railway variables are preserved.
-
-Only managed variable names are returned as resource attributes. Desired values
-still exist in Alchemy's resource inputs and therefore in its state. Users must
-protect the selected state backend as secret-bearing infrastructure state.
-
-Transport errors redact the Railway bearer token and all string values supplied
-as GraphQL variables before creating a provider error.
+Alchemy state still contains desired resource inputs, including variable
+values. Secret safety therefore also depends on an encrypted,
+access-controlled shared state backend and disciplined CI logs.
 
 ## Authentication
 
-The provider registers an Alchemy authentication provider with two methods:
+- API/account/workspace tokens: `Authorization: Bearer`, normally sourced from
+  `RAILWAY_API_TOKEN`.
+- Project tokens: `Project-Access-Token`, normally sourced from
+  `RAILWAY_TOKEN`.
+- Stored credentials record their token type. Legacy v0.1 records default to
+  API-token behavior.
+- Programmatic credentials accept only `Redacted<string>`.
 
-- `env`: resolve `RAILWAY_API_TOKEN` lazily;
-- `stored`: read a token from Alchemy's credential store.
-
-Resolved credentials use Effect `Redacted<string>`. Authentication is resolved
-inside live operations rather than when the provider collection is constructed.
-
-Account and workspace tokens use Railway's bearer-token header and are
-supported. Project tokens use a different header and are deferred.
+Credentials resolve lazily inside live operations. Construction never logs or
+serializes the token into resource state.
 
 ## Adapter boundaries
 
-- `src/client/RailwayClient.ts` defines the Effect service and normalized
-  domain model used by resources.
-- `src/client/RailwayGraphQLRequest.ts` owns authenticated HTTP transport,
-  GraphQL envelope handling, and error redaction.
-- `src/client/RailwayGraphQLContract.ts` decodes untrusted Railway responses.
-- `src/client/RailwayGraphQL.ts` maps Railway operations into the client
-  service.
-- `src/testing/InMemoryRailwayClient.ts` provides deterministic lifecycle
-  tests.
-- `src/testing/RailwayCliGraphQLExecutor.ts` provides an authenticated live-test
-  transport without accessing the CLI credential.
+- `src/client/RailwayClient.ts`: normalized domain model/Effect service.
+- `src/client/RailwayGraphQLRequest.ts`: HTTP, auth headers, safe read retries,
+  envelope handling, and redaction.
+- `src/client/RailwayGraphQLContract.ts`: decoding untrusted responses.
+- `src/client/RailwayGraphQL.ts`: Railway GraphQL operations.
+- `src/testing/InMemoryRailwayClient.ts`: deterministic lifecycle tests.
+- `src/testing/RailwayCliGraphQLExecutor.ts`: live acceptance transport without
+  reading the CLI credential.
 
-Resources do not depend directly on HTTP, the Railway CLI, or raw GraphQL
-payloads.
-
-## Deployment polling
-
-Deployment polling uses a bounded Effect `Schedule`. `SUCCESS` returns a fresh
-service snapshot. Terminal Railway failures and an exhausted polling schedule
-become `RailwayDeploymentFailed`.
-
-The default client polls every two seconds for at most 150 observations.
-Testing and acceptance adapters can override both values.
+Resource implementations do not depend on raw HTTP, CLI output, or GraphQL
+payload shapes.
 
 ## Verification layers
 
-The release gate combines:
-
-1. strict TypeScript and Effect diagnostics;
-2. provider lifecycle tests against the in-memory client;
-3. GraphQL transport and response-contract tests;
-4. an example consumer typecheck;
-5. JavaScript and declaration builds;
-6. package-surface linting and tarball inspection;
-7. an opt-in live Railway acceptance test.
-
-The live acceptance test creates a disposable service, adopts it, converges its
-configuration, verifies HTTPS, verifies a second deploy is a no-op, destroys the
-stack, and confirms the service disappears.
+1. TypeScript and Effect diagnostics.
+2. Public provider lifecycle tests with deterministic in-memory Railway.
+3. HTTP auth/retry/redaction and GraphQL contract tests.
+4. Public `providers()` path test through real HTTP.
+5. Consumer example typecheck, JS/declaration build, publint, and tarball audit.
+6. Opt-in live Railway acceptance covering deploy, no-op, drift, HTTP, and
+   cleanup.

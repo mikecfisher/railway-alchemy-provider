@@ -87,27 +87,35 @@ const decodeEnvelope = (
 
 export interface RailwayFetchExecutorOptions {
   readonly token: Redacted.Redacted<string>;
+  readonly tokenType?: "api" | "project";
   readonly endpoint?: string;
   readonly fetch?: (request: Request) => Promise<Response>;
+  readonly maxReadRetries?: number;
+  readonly retryBaseDelay?: number;
 }
 
 export const makeRailwayFetchExecutor = ({
   token,
+  tokenType = "api",
   endpoint = "https://backboard.railway.com/graphql/v2",
   fetch: fetchImpl = globalThis.fetch,
+  maxReadRetries = 3,
+  retryBaseDelay = 200,
 }: RailwayFetchExecutorOptions): RailwayGraphQLExecutor => ({
   execute: (operation, query, variables) => {
     const sensitiveValues = [
       Redacted.value(token),
       ...railwaySensitiveValues(variables),
     ];
-    return Effect.tryPromise({
+    const request = Effect.tryPromise({
       try: (signal) =>
         fetchImpl(
           new Request(endpoint, {
             method: "POST",
             headers: {
-              authorization: `Bearer ${Redacted.value(token)}`,
+              ...(tokenType === "project"
+                ? { "Project-Access-Token": Redacted.value(token) }
+                : { authorization: `Bearer ${Redacted.value(token)}` }),
               "content-type": "application/json",
             },
             body: JSON.stringify({ query, variables }),
@@ -117,6 +125,7 @@ export const makeRailwayFetchExecutor = ({
       catch: (error) =>
         new RailwayApiError({
           operation,
+          retryable: true,
           message: redactRailwayErrorMessage(
             `Railway request failed: ${String(error)}`,
             sensitiveValues,
@@ -136,6 +145,11 @@ export const makeRailwayFetchExecutor = ({
             if (!response.ok) {
               return new RailwayApiError({
                 operation,
+                status: response.status,
+                retryable:
+                  response.status === 408 ||
+                  response.status === 429 ||
+                  response.status >= 500,
                 message: redactRailwayErrorMessage(
                   `Railway returned HTTP ${response.status}: ` +
                     body.slice(0, 1_000),
@@ -160,6 +174,27 @@ export const makeRailwayFetchExecutor = ({
       ),
       Effect.withSpan(`RailwayGraphQL.${operation}`),
     );
+
+    const isRead = /^\s*query\b/.test(query);
+    const run = (
+      retriesRemaining: number,
+      delay: number,
+    ): Effect.Effect<unknown, RailwayApiError> =>
+      request.pipe(
+        Effect.catchTag("RailwayApiError", (error) =>
+          isRead && error.retryable === true && retriesRemaining > 0
+            ? Effect.sleep(delay).pipe(
+                Effect.andThen(
+                  Effect.suspend(() =>
+                    run(retriesRemaining - 1, Math.max(1, delay * 2))
+                  ),
+                ),
+              )
+            : Effect.fail(error)
+        ),
+      );
+
+    return run(Math.max(0, maxReadRetries), Math.max(0, retryBaseDelay));
   },
 });
 

@@ -9,11 +9,23 @@ export class RailwayNotFound extends Schema.TaggedErrorClass<RailwayNotFound>()(
   },
 ) {}
 
+export class RailwayAmbiguousMatch extends Schema.TaggedErrorClass<RailwayAmbiguousMatch>()(
+  "RailwayAmbiguousMatch",
+  {
+    resource: Schema.String,
+    selector: Schema.String,
+    matches: Schema.Int,
+    message: Schema.String,
+  },
+) {}
+
 export class RailwayApiError extends Schema.TaggedErrorClass<RailwayApiError>()(
   "RailwayApiError",
   {
     operation: Schema.String,
     message: Schema.String,
+    status: Schema.optional(Schema.Int),
+    retryable: Schema.optional(Schema.Boolean),
   },
 ) {}
 
@@ -35,6 +47,7 @@ export class RailwayDeploymentFailed extends Schema.TaggedErrorClass<RailwayDepl
 
 export type RailwayClientError =
   | RailwayNotFound
+  | RailwayAmbiguousMatch
   | RailwayApiError
   | RailwayAuthenticationError
   | RailwayDeploymentFailed;

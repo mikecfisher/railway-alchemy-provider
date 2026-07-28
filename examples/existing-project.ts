@@ -23,12 +23,20 @@ export default Alchemy.Stack(
       source: { image: "nginx:1.27-alpine" },
       healthcheckPath: "/",
       numReplicas: 1,
-      variables: {
-        PORT: "80",
-        APP_ENV: "production",
-      },
       public: true,
       targetPort: 80,
+    });
+
+    yield* Railway.ServiceVariable("Port", {
+      service,
+      name: "PORT",
+      value: "80",
+    });
+
+    yield* Railway.ServiceVariable("AppEnvironment", {
+      service,
+      name: "APP_ENV",
+      value: "production",
     });
 
     return {

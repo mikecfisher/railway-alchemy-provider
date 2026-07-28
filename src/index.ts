@@ -1,4 +1,14 @@
 export {
+  CustomDomain,
+  type CustomDomainAttributes,
+  type CustomDomainProps,
+} from "./resources/CustomDomain.js";
+export {
+  Environment,
+  type EnvironmentAttributes,
+  type EnvironmentProps,
+} from "./resources/Environment.js";
+export {
   ExistingProject,
   type ExistingProjectAttributes,
   type ExistingProjectProps,
@@ -8,10 +18,15 @@ export type {
   RailwayResolvedCredentials,
 } from "./auth/RailwayAuth.js";
 export type {
+  CustomDomainSnapshot,
   DeploymentStatus,
+  EnvironmentSnapshot,
   ProjectSnapshot,
+  RestartPolicyType,
   RailwayClientService,
+  ServiceBuilder,
   ServiceSnapshot,
+  ServiceSource,
 } from "./client/RailwayClient.js";
 export * from "./Errors.js";
 export {
@@ -24,3 +39,10 @@ export {
   type ServiceAttributes,
   type ServiceProps,
 } from "./resources/Service.js";
+export {
+  ServiceVariable,
+  type ServiceVariableProps,
+  SharedVariable,
+  type SharedVariableProps,
+  type VariableAttributes,
+} from "./resources/Variable.js";

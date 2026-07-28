@@ -19,8 +19,18 @@ import * as Schema from "effect/Schema";
 export const RAILWAY_AUTH_PROVIDER_NAME = "Railway";
 
 export const RailwayAuthConfig = Schema.Union([
-  Schema.Struct({ method: Schema.Literal("env") }),
-  Schema.Struct({ method: Schema.Literal("stored") }),
+  Schema.Struct({
+    method: Schema.Literal("env"),
+    tokenType: Schema.optionalKey(
+      Schema.Literals(["api", "project"]),
+    ),
+  }),
+  Schema.Struct({
+    method: Schema.Literal("stored"),
+    tokenType: Schema.optionalKey(
+      Schema.Literals(["api", "project"]),
+    ),
+  }),
 ]);
 
 export type RailwayAuthConfig =
@@ -29,18 +39,20 @@ export type RailwayAuthConfig =
 export interface RailwayStoredCredentials {
   readonly type: "token";
   readonly token: string;
+  readonly tokenType?: "api" | "project";
 }
 
 export interface RailwayResolvedCredentials {
   readonly type: "token";
   readonly token: Redacted.Redacted<string>;
+  readonly tokenType: "api" | "project";
   readonly source: {
     readonly type: RailwayAuthConfig["method"];
     readonly details?: string;
   };
 }
 
-const options: ReadonlyArray<{
+const methodOptions: ReadonlyArray<{
   readonly value: RailwayAuthConfig["method"];
   readonly label: string;
   readonly hint?: string;
@@ -48,7 +60,7 @@ const options: ReadonlyArray<{
   {
     value: "env",
     label: "Environment Variable",
-    hint: "RAILWAY_API_TOKEN",
+    hint: "RAILWAY_API_TOKEN or RAILWAY_TOKEN",
   },
   {
     value: "stored",
@@ -68,9 +80,13 @@ export const RailwayAuth = AuthProviderLayer<
 
     const loginStored = Effect.fn("RailwayAuth.loginStored")(function* (
       profileName: string,
+      tokenType: "api" | "project",
     ) {
       const token = yield* Clank.password({
-        message: "Railway API Token",
+        message:
+          tokenType === "project"
+            ? "Railway Project Token"
+            : "Railway API or Workspace Token",
         validate: (value) => (value.length === 0 ? "Required" : undefined),
       }).pipe(retryOnce);
 
@@ -80,33 +96,73 @@ export const RailwayAuth = AuthProviderLayer<
         {
           type: "token",
           token,
+          tokenType,
         },
       );
       yield* Clank.success("Railway: credentials saved.");
-      return { method: "stored" as const };
+      return { method: "stored" as const, tokenType };
     });
 
     const configureInteractive = (profileName: string) =>
       Clank.select({
-        message: "Railway authentication method",
-        options: [...options],
+        message: "Railway token type",
+        options: [
+          {
+            value: "api" as const,
+            label: "API or Workspace Token",
+            hint: "Authorization: Bearer",
+          },
+          {
+            value: "project" as const,
+            label: "Project Token",
+            hint: "Project-Access-Token",
+          },
+        ],
       }).pipe(
-        Effect.flatMap((method) =>
-          Match.value(method).pipe(
-            Match.when("env", () =>
-              Effect.succeed({ method: "env" as const })
+        Effect.flatMap((tokenType) =>
+          Clank.select({
+            message: "Railway authentication method",
+            options: [...methodOptions],
+          }).pipe(
+            Effect.flatMap((method) =>
+              Match.value(method).pipe(
+                Match.when("env", () =>
+                  Effect.succeed({
+                    method: "env" as const,
+                    tokenType,
+                  })
+                ),
+                Match.when("stored", () =>
+                  loginStored(profileName, tokenType)
+                ),
+                Match.exhaustive,
+              ),
             ),
-            Match.when("stored", () => loginStored(profileName)),
-            Match.exhaustive,
-          ),
+          )
         ),
       );
 
+    const configureCi = Effect.all({
+      api: getEnvRedacted("RAILWAY_API_TOKEN"),
+      project: getEnvRedacted("RAILWAY_TOKEN"),
+    }).pipe(
+      Effect.flatMap(({ api, project }) =>
+        api && project
+          ? Effect.fail(
+              new AuthError({
+                message:
+                  "Set only one of RAILWAY_API_TOKEN or RAILWAY_TOKEN.",
+              }),
+            )
+          : Effect.succeed({
+              method: "env" as const,
+              tokenType: project ? ("project" as const) : ("api" as const),
+            })
+      ),
+    );
+
     const configure = (profileName: string, context: ConfigureContext) =>
-      (context.ci
-        ? Effect.succeed({ method: "env" as const })
-        : configureInteractive(profileName)
-      ).pipe(
+      (context.ci ? configureCi : configureInteractive(profileName)).pipe(
         Effect.mapError(
           (cause) =>
             new AuthError({
@@ -124,16 +180,22 @@ export const RailwayAuth = AuthProviderLayer<
         Match.when(
           { method: "env" },
           Effect.fn("RailwayAuth.readEnv")(function* () {
-            const token = yield* getEnvRedacted("RAILWAY_API_TOKEN");
+            const tokenType = config.tokenType ?? "api";
+            const variableName =
+              tokenType === "project"
+                ? "RAILWAY_TOKEN"
+                : "RAILWAY_API_TOKEN";
+            const token = yield* getEnvRedacted(variableName);
             if (!token) {
               return yield* new AuthError({
                 message:
-                  "Railway environment credentials were not found. Set RAILWAY_API_TOKEN.",
+                  `Railway environment credentials were not found. Set ${variableName}.`,
               });
             }
             return {
               type: "token" as const,
               token,
+              tokenType,
               source: { type: "env" as const },
             };
           }),
@@ -148,6 +210,10 @@ export const RailwayAuth = AuthProviderLayer<
                 ? Effect.succeed({
                     type: "token" as const,
                     token: Redacted.make(credentials.token),
+                    tokenType:
+                      config.tokenType ??
+                      credentials.tokenType ??
+                      ("api" as const),
                     source: { type: "stored" as const },
                   })
                 : Effect.fail(
@@ -178,7 +244,11 @@ export const RailwayAuth = AuthProviderLayer<
     const login = (profileName: string, config: RailwayAuthConfig) =>
       Match.value(config).pipe(
         Match.when({ method: "env" }, () =>
-          getEnvRedacted("RAILWAY_API_TOKEN").pipe(
+          getEnvRedacted(
+            (config.tokenType ?? "api") === "project"
+              ? "RAILWAY_TOKEN"
+              : "RAILWAY_API_TOKEN",
+          ).pipe(
             Effect.flatMap((token) =>
               token
                 ? Effect.void
@@ -198,7 +268,9 @@ export const RailwayAuth = AuthProviderLayer<
             .read<RailwayStoredCredentials>(profileName, "railway-stored")
             .pipe(
               Effect.flatMap((credentials) =>
-                credentials ? Effect.void : loginStored(profileName),
+                credentials
+                  ? Effect.void
+                  : loginStored(profileName, config.tokenType ?? "api"),
               ),
             ),
         ),
@@ -217,6 +289,7 @@ export const RailwayAuth = AuthProviderLayer<
         Effect.tap((credentials) =>
           Effect.all([
             Console.log(`  token: ${displayRedacted(credentials.token, 6)}`),
+            Console.log(`  token type: ${credentials.tokenType}`),
             Console.log(`  source: ${credentials.source.type}`),
           ]),
         ),

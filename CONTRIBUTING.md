@@ -18,7 +18,7 @@ Usage and bug-report guidance is also available in [SUPPORT.md](SUPPORT.md).
 Requirements:
 
 - Bun `1.3.14`;
-- Node.js 18 or newer for the Node compatibility smoke test;
+- Node.js 20.19 or newer for the Node compatibility smoke test;
 - Railway CLI authentication only when running the opt-in acceptance test.
 
 ```bash
@@ -70,8 +70,9 @@ npm pack --dry-run --ignore-scripts
 
 ### Live Railway acceptance
 
-The live test creates and then deletes a real Railway service. Use a disposable
-name in a project where you are authorized to perform both operations:
+The live test creates a temporary environment, a service, variables, generated
+and custom domains, then deletes them. Use a dedicated test project where you
+are authorized to perform the operations:
 
 ```bash
 RAILWAY_TEST_PROJECT_ID=... \
