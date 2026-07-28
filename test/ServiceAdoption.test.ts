@@ -65,3 +65,60 @@ test.provider(
       ).toBeUndefined();
     }),
 );
+
+const ambiguousClient = InMemoryRailwayClient.make({
+  projects: [
+    {
+      projectId: "project_ambiguous",
+      name: "ambiguous-project",
+      environmentId: "environment_ambiguous",
+      environmentName: "production",
+    },
+  ],
+  services: [
+    {
+      serviceId: "service_ambiguous_1",
+      projectId: "project_ambiguous",
+      environmentId: "environment_ambiguous",
+      name: "duplicate-api",
+      image: "nginx:1.26-alpine",
+      numReplicas: 1,
+      variables: {},
+    },
+    {
+      serviceId: "service_ambiguous_2",
+      projectId: "project_ambiguous",
+      environmentId: "environment_ambiguous",
+      name: "duplicate-api",
+      image: "nginx:1.26-alpine",
+      numReplicas: 1,
+      variables: {},
+    },
+  ],
+});
+
+const ambiguousTest = Test.make({
+  providers: providersForTesting({ client: ambiguousClient }),
+}).test;
+
+ambiguousTest.provider(
+  "ambiguous exact-name adoption fails closed",
+  (stack) =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        stack.deploy(
+          Service("DuplicateApi", {
+            project: {
+              projectId: "project_ambiguous",
+              environmentId: "environment_ambiguous",
+            },
+            name: "duplicate-api",
+            source: { image: "nginx:1.27-alpine" },
+          }).pipe(adopt(true)),
+        ),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(ambiguousClient.mutations).toEqual([]);
+    }),
+);

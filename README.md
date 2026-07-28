@@ -9,87 +9,84 @@ An Effect-native Railway provider for
 
 > [!IMPORTANT]
 > This is an experimental, community-maintained pre-1.0 package. It is not an
-> official Railway or Alchemy project. Alchemy v2 and Effect v4 are currently
-> beta dependencies, so compatible versions are pinned exactly.
+> official Railway or Alchemy project. Alchemy v2 and Effect v4 are beta
+> dependencies, so compatible versions are pinned exactly.
 
-## What it manages
+## What v0.2 manages
 
-The v0.1 provider deliberately supports one safe, focused path:
+- `ExistingProject`: read-only reference to an existing project/environment.
+- `Environment`: create, rename, adopt, drift-check, and delete an environment.
+- `Service`: Docker-image or GitHub-backed service, deployment configuration,
+  selected variables, Railway-generated domain, deploy/wait, drift repair, and
+  deletion.
+- `SharedVariable`: one environment-scoped variable.
+- `ServiceVariable`: one service-scoped variable.
+- `CustomDomain`: one custom hostname and target port.
 
-- `ExistingProject` references an existing Railway project and environment
-  without creating, updating, or deleting either one.
-- `Service` manages a Docker-image service in that environment: image,
-  health-check path, region, replica count, selected variables, a generated
-  Railway public domain, deployment, drift repair, and deletion.
-- Existing services are matched by exact name and require explicit Alchemy
-  adoption before the provider can change or delete them.
+All mutable resources require explicit Alchemy adoption when an exact live
+match already exists. Ambiguous matches fail closed.
 
-It does not yet manage projects, environments, GitHub sources, custom domains,
-volumes, databases, TCP proxies, webhooks, OAuth, or project tokens. See the
-[roadmap](docs/railway-provider-roadmap.md).
+Projects, volumes, databases, TCP proxies, private registries, and webhooks are
+not managed yet. See the [roadmap](docs/railway-provider-roadmap.md).
 
 ## Compatibility
 
 | Component | Supported version |
 | --- | --- |
-| `railway-alchemy-provider` | `0.1.x` |
-| `alchemy` | `2.0.0-beta.64` |
+| `railway-alchemy-provider` | `0.2.x` |
+| `alchemy` | `2.0.0-beta.65` |
 | `effect` | `4.0.0-beta.102` |
 | `@effect/platform-bun` | `4.0.0-beta.102` |
 | `@effect/platform-node` | `4.0.0-beta.102` |
 | Bun | `1.3.14` tested |
-| Node.js | `>=18`; Node 22 import-smoke-tested |
+| Node.js | `>=20.19`; Node 20.19 and 22 import-smoke-tested |
 | Module format | ESM only |
 
 ## Install
 
 ```bash
 bun add railway-alchemy-provider \
-  alchemy@2.0.0-beta.64 \
+  alchemy@2.0.0-beta.65 \
   effect@4.0.0-beta.102 \
   @effect/platform-bun@4.0.0-beta.102 \
   @effect/platform-node@4.0.0-beta.102
 ```
 
-## Quick start
+## Authentication
 
-### 1. Choose Railway credentials
-
-For CI, set an account or workspace token that can access the target project:
+Account and workspace tokens use `RAILWAY_API_TOKEN`:
 
 ```bash
 export RAILWAY_API_TOKEN="..."
 ```
 
-For local use, create `alchemy.run.ts` first and then let Alchemy store the
-token in its credential store:
+Project tokens use `RAILWAY_TOKEN` and Railway's
+`Project-Access-Token` header. Configure the token type interactively:
 
 ```bash
 bunx alchemy login --configure
 ```
 
-Choose Railway and the stored API-token method. Credentials are resolved lazily
-for Railway operations, redacted from profile output, and omitted from resource
-outputs and provider errors.
+Choose Railway, the token type, and either environment or stored credentials.
+Legacy v0.1 stored/API profiles continue to resolve as API tokens.
 
-Project tokens are not supported in v0.1 because Railway requires a different
-authentication header for them.
+For non-interactive code, pass a redacted token:
 
-### 2. Find the target IDs
+```ts
+import * as Redacted from "effect/Redacted";
+import * as Railway from "railway-alchemy-provider";
 
-Use the Railway dashboard, or link the Railway CLI and inspect its current
-context:
-
-```bash
-railway status --json
+const railwayProviders = Railway.providers({
+  credentials: {
+    token: Redacted.make(process.env.RAILWAY_TOKEN!),
+    tokenType: "project",
+  },
+});
 ```
 
-You need a project ID and an environment ID. `ExistingProject` will verify that
-they refer to the same Railway project before any service mutation runs.
+Never put the unredacted token in resource inputs or outputs.
 
-### 3. Declare the stack
-
-Create `alchemy.run.ts`:
+## Quick start
 
 ```ts
 import * as Alchemy from "alchemy";
@@ -97,7 +94,7 @@ import * as Effect from "effect/Effect";
 import * as Railway from "railway-alchemy-provider";
 
 const projectId = "project-id";
-const environmentId = "environment-id";
+const productionEnvironmentId = "environment-id";
 
 export default Alchemy.Stack(
   "RailwayExample",
@@ -106,120 +103,153 @@ export default Alchemy.Stack(
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
-    const project = yield* Railway.ExistingProject("Project", {
+    const production = yield* Railway.ExistingProject("Production", {
       projectId,
-      environmentId,
+      environmentId: productionEnvironmentId,
     });
 
     const api = yield* Railway.Service("Api", {
-      project,
+      project: production,
       name: "api",
       source: { image: "nginx:1.27-alpine" },
       healthcheckPath: "/",
       numReplicas: 1,
-      variables: {
-        // Railway health checks use PORT. Set it when the image listens on a
-        // fixed port instead of Railway's injected dynamic port.
-        PORT: "80",
-        APP_ENV: "production",
-      },
       public: true,
       targetPort: 80,
     });
 
-    return {
-      projectName: project.name,
-      serviceId: api.serviceId,
-      url: api.url,
-      deploymentStatus: api.deploymentStatus,
-    };
+    yield* Railway.ServiceVariable("ApiPort", {
+      service: api,
+      name: "PORT",
+      value: "80",
+    });
+
+    return { serviceId: api.serviceId, url: api.url };
   }),
 );
 ```
 
-### 4. Plan and deploy
-
 ```bash
 bunx alchemy plan
 bunx alchemy deploy
-```
-
-To destroy the managed service:
-
-```bash
 bunx alchemy destroy
 ```
 
-> [!CAUTION]
-> Destroy deletes the Railway service, including when the service was imported
-> through explicit adoption. `ExistingProject` and its environment are never
-> deleted.
+`Alchemy.localState()` is suitable for individual/local use. A real team should
+use protected shared state and a single CI writer; see
+[Team operations](docs/team-operations.md).
 
-## Resource reference
+## GitHub-backed services
 
-### `ExistingProject`
+```ts
+const api = yield* Railway.Service("Api", {
+  project,
+  name: "api",
+  source: {
+    repo: "your-org/your-repo",
+    branch: "main",
+    checkSuites: true,
+  },
+  builder: "RAILPACK",
+  rootDirectory: "/apps/api",
+  buildCommand: "bun run build",
+  startCommand: "bun run start",
+  preDeployCommand: ["bun run migrate"],
+  healthcheckPath: "/health",
+  healthcheckTimeout: 30,
+  restartPolicyType: "ON_FAILURE",
+  restartPolicyMaxRetries: 5,
+  sleepApplication: false,
+  watchPatterns: ["/apps/api/**"],
+});
+```
 
-References one existing Railway project/environment pair.
+The Railway account must already have access to the GitHub repository.
+Changing image/repository/branch or deployment settings converges the existing
+service; changing project/environment replaces it.
 
-#### Inputs
+## Managed environments
 
-| Property | Type | Required | Description |
+```ts
+const staging = yield* Railway.Environment("Staging", {
+  projectId,
+  name: "staging",
+  sourceEnvironmentId: productionEnvironmentId,
+  skipInitialDeploys: true,
+});
+
+const worker = yield* Railway.Service("Worker", {
+  project: staging,
+  name: "worker",
+  source: { repo: "your-org/your-repo", branch: "main" },
+  startCommand: "bun run worker",
+});
+```
+
+Environment rename updates in place. Changing the project, source environment,
+or `ephemeral` setting replaces the environment. Destroy deletes managed or
+adopted environments and everything Railway associates with them.
+
+## Variables and secrets
+
+Prefer one first-class resource per independently owned value:
+
+```ts
+yield* Railway.SharedVariable("DatabaseHost", {
+  project,
+  name: "DATABASE_HOST",
+  value: database.hostname,
+});
+
+yield* Railway.ServiceVariable("ApiSecret", {
+  service: api,
+  name: "API_SECRET",
+  value: secret,
+});
+```
+
+Variable values are deliberately omitted from resource outputs and provider
+errors. Values remain in Alchemy resource inputs/state, so the state backend
+must be encrypted and access-controlled.
+
+`Service.variables` remains supported for convenient bulk ownership. Do not
+manage the same key with both `Service.variables` and `ServiceVariable`.
+Unmanaged Railway variables are preserved.
+
+## Domains
+
+`Service.public` manages Railway's generated domain. Use `CustomDomain` for
+your own hostname:
+
+```ts
+const domain = yield* Railway.CustomDomain("ApiDomain", {
+  service: api,
+  domain: "api.example.com",
+  targetPort: 8080,
+});
+```
+
+The output includes Railway's `verified`, `certificateStatus`, and
+`syncStatus`; DNS configuration is still your responsibility. Changing the
+hostname or service replaces the resource. Changing `targetPort` updates it in
+place.
+
+## Resource summary
+
+| Resource | Stable identity | In-place drift | Delete behavior |
 | --- | --- | --- | --- |
-| `projectId` | `string` | yes | Railway project ID. |
-| `environmentId` | `string` | yes | Environment ID belonging to that project. |
+| `ExistingProject` | project + environment IDs | live names refreshed | no-op |
+| `Environment` | environment + project IDs | name | deletes environment |
+| `Service` | service + project + environment IDs | source, deployment config, variables, domains, health | deletes service |
+| `SharedVariable` | project + environment + name | value | deletes variable |
+| `ServiceVariable` | project + environment + service + name | value | deletes variable |
+| `CustomDomain` | domain + service scope | target port/status | deletes domain |
 
-#### Outputs
+Every plan reads live state. Read-only GraphQL operations retry bounded
+transient network, 408, 429, and 5xx failures. Mutations are never
+automatically retried because their idempotency cannot be assumed.
 
-| Property | Type | Description |
-| --- | --- | --- |
-| `projectId` | `string` | Stable Railway project ID. |
-| `name` | `string` | Live project name. |
-| `environmentId` | `string` | Stable Railway environment ID. |
-| `environmentName` | `string` | Live environment name. |
-
-Changing either ID replaces the Alchemy reference. Deleting the reference is a
-no-op in Railway.
-
-### `Service`
-
-Manages one Docker-image Railway service in one environment.
-
-#### Inputs
-
-| Property | Type | Required | Default | Description |
-| --- | --- | --- | --- | --- |
-| `project` | `{ projectId, environmentId }` | yes | — | Existing Railway scope. An `ExistingProject` output can be passed directly. |
-| `name` | `string` | yes | — | Exact Railway service name. |
-| `source.image` | `string` | yes | — | Public Docker image reference. |
-| `healthcheckPath` | `string` | no | unset | HTTP health-check path. |
-| `region` | `string` | no | Railway default | Railway deployment region. |
-| `numReplicas` | positive integer | no | `1` | Desired replica count. |
-| `variables` | `Record<string, string>` | no | `{}` | Variables owned by this resource. |
-| `public` | `boolean` | no | `false` | Generate a Railway public domain. |
-| `targetPort` | positive integer | no | Railway default | Port used by the generated domain. |
-
-#### Outputs
-
-| Property | Type | Description |
-| --- | --- | --- |
-| `serviceId` | `string` | Stable Railway service ID. |
-| `projectId` | `string` | Railway project ID. |
-| `environmentId` | `string` | Railway environment ID. |
-| `name` | `string` | Live service name. |
-| `image` | `string` | Live Docker image. |
-| `healthcheckPath` | `string \| undefined` | Live health-check path. |
-| `region` | `string \| undefined` | Live deployment region. |
-| `numReplicas` | `number` | Live replica count. |
-| `variableNames` | `readonly string[]` | Managed variable names; values are omitted. |
-| `domainId` | `string \| undefined` | Generated Railway domain ID. |
-| `domain` | `string \| undefined` | Generated hostname. |
-| `url` | `string \| undefined` | Generated HTTPS URL. |
-| `deploymentId` | `string \| undefined` | Latest deployment ID. |
-| `deploymentStatus` | `string \| undefined` | Latest Railway deployment status. |
-
-## Adopting an existing service
-
-Cold adoption requires literal project/environment IDs and an explicit policy:
+## Adoption and deletion safety
 
 ```ts
 import { adopt } from "alchemy/AdoptPolicy";
@@ -228,74 +258,38 @@ const api = yield* Railway.Service("Api", {
   project: { projectId, environmentId },
   name: "existing-api",
   source: { image: "nginx:1.27-alpine" },
-  variables: { PORT: "80" },
-  public: true,
-  targetPort: 80,
 }).pipe(adopt(true));
 ```
 
-The provider adopts only one exact live name match. Zero matches create a new
-service; ambiguous matches fail closed. After adoption, the service is managed
-like any other resource and will be deleted by stack destruction.
+Exact-name discovery returns an unowned resource. Without `adopt(true)`,
+deployment stops before mutation. After adoption, stack destruction deletes
+that live resource. Use Alchemy's removal-policy controls for infrastructure
+that must be retained, and verify a destroy plan before approving it.
 
-## Lifecycle, drift, and secrets
+## Railway native IaC versus this provider
 
-Every plan reads live Railway state. A managed service is updated when its
-image, health check, region, replicas, managed variables, public-domain setting,
-or deployment health differs from the desired state.
+Railway's native Infrastructure as Code is the best default when the entire
+stack is Railway-only and its current resource model covers the workload. This
+provider is useful when a team wants one Alchemy/Effect graph across Railway
+and other providers, explicit adoption semantics, typed outputs between
+resources, or custom lifecycle policy. Railway native IaC is evolving; evaluate
+both against your current requirements.
 
-The provider tracks the names of variables it manages:
-
-- desired managed variables are created or repaired;
-- a previously managed variable removed from the resource is deleted;
-- variables not managed by this resource are preserved.
-
-Variable values are intentionally omitted from outputs and errors. Desired
-values still exist in the Alchemy state input, so use an appropriately protected
-state backend for secrets and never commit `.alchemy/` or `.env` files.
-
-A deployment is not reported as successful until Railway reaches `SUCCESS`.
-Terminal failure states and polling timeouts become typed Effect errors:
-
-- `RailwayAuthenticationError`
-- `RailwayApiError`
-- `RailwayNotFound`
-- `RailwayDeploymentFailed`
-
-## Architecture
-
-See [docs/design.md](docs/design.md) for lifecycle, ownership, authentication,
-and adapter decisions.
-
-The stable public package entry points are:
-
-- `railway-alchemy-provider`
-- `railway-alchemy-provider/testing`
-
-The testing entry point exposes the in-memory client, GraphQL executor seam,
-Railway CLI adapter, and provider-layer constructor used by this package's own
-tests. The Railway CLI adapter itself requires Bun.
-
-## Development
-
-Requirements:
-
-- Bun `1.3.14`
-- an authenticated Railway CLI only for live acceptance tests
+## Development and verification
 
 ```bash
 bun install --frozen-lockfile
 bun run check
 ```
 
-The exact Effect source used by the package is vendored read-only under
-`repos/effect`. The verification suite checks that its version matches the
-package peer dependency. It is excluded from package builds, TypeScript
-projects, tests, and editor search.
+The release gate includes strict TypeScript, Effect diagnostics, provider
+lifecycle tests, GraphQL boundary tests, production provider-path coverage,
+build/declaration output, package linting, example compilation, and tarball
+inspection. The exact Effect source is vendored read-only under `repos/effect`.
 
-The real Railway acceptance test is opt-in. It creates a uniquely named empty
-service through the authenticated Railway CLI, adopts it with the provider,
-deploys it, verifies HTTPS, destroys it, and confirms it disappeared:
+The opt-in live test creates an isolated temporary environment and disposable
+Railway resources, verifies convergence/HTTP, destroys them, and confirms
+cleanup:
 
 ```bash
 RAILWAY_TEST_PROJECT_ID=... \
@@ -304,27 +298,16 @@ RAILWAY_TEST_SERVICE_NAME=alchemy-provider-e2e-local \
 bun run test:acceptance
 ```
 
-The harness never reads or prints the Railway CLI credential.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+See [Contributing](CONTRIBUTING.md), [Design](docs/design.md),
+[Migration](docs/migrating-to-v0.2.md), and
+[Release process](docs/releasing.md).
 
 ## Support and security
 
-- Usage questions and reproducible bugs: [GitHub Issues](https://github.com/mikecfisher/railway-alchemy-provider/issues)
+- Bugs and usage: [GitHub Issues](https://github.com/mikecfisher/railway-alchemy-provider/issues)
 - Support expectations: [SUPPORT.md](SUPPORT.md)
-- Contribution guidelines: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Security reports: [SECURITY.md](SECURITY.md)
 - Community expectations: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
 Do not include tokens, variable values, `.alchemy` state, or private Railway
 response payloads in public issues.
-
-## Releases
-
-GitHub Releases publish to npm from `.github/workflows/publish.yml` using npm
-trusted publishing and provenance. A release tag must exactly match
-`v${package.json.version}`.
-
-## License
-
-[Apache License 2.0](LICENSE).

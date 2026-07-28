@@ -107,6 +107,47 @@ test("rejects malformed Railway responses at the boundary", async () => {
   expect(exit._tag).toBe("Failure");
 });
 
+test("lists every Railway service page", async () => {
+  const cursors: Array<unknown> = [];
+  const client = makeRailwayClient({
+    execute: (operation, _query, variables) => {
+      if (operation !== "ListServices") {
+        return Effect.die(new Error(`Unexpected operation: ${operation}`));
+      }
+      cursors.push(variables["after"]);
+      const secondPage = variables["after"] === "cursor_1";
+      return Effect.succeed({
+        project: {
+          services: {
+            edges: [
+              {
+                node: {
+                  id: secondPage ? "service_2" : "service_1",
+                  name: secondPage ? "worker" : "api",
+                  projectId: "project_1",
+                },
+              },
+            ],
+            pageInfo: secondPage
+              ? { hasNextPage: false, endCursor: "cursor_2" }
+              : { hasNextPage: true, endCursor: "cursor_1" },
+          },
+        },
+      });
+    },
+  });
+
+  const services = await Effect.runPromise(
+    client.listServices("project_1", "environment_1"),
+  );
+
+  expect(services.map(({ serviceId }) => serviceId)).toEqual([
+    "service_1",
+    "service_2",
+  ]);
+  expect(cursors).toEqual([null, "cursor_1"]);
+});
+
 test("polls deployments with a bounded Effect schedule", async () => {
   let deploymentReads = 0;
   const client = makeRailwayClient(
@@ -166,4 +207,28 @@ test("polls deployments with a bounded Effect schedule", async () => {
 
   expect(deployed.deploymentStatus).toBe("SUCCESS");
   expect(deploymentReads).toBe(2);
+});
+
+test("rejects a service deletion that Railway did not apply", async () => {
+  const client = makeRailwayClient({
+    execute: (operation) =>
+      operation === "DeleteService"
+        ? Effect.succeed({ serviceDelete: false })
+        : Effect.die(new Error(`Unexpected operation: ${operation}`)),
+  });
+
+  const error = await Effect.runPromise(
+    client
+      .deleteService({
+        projectId: "project_1",
+        environmentId: "environment_1",
+        serviceId: "service_1",
+      })
+      .pipe(Effect.flip),
+  );
+
+  expect(error._tag).toBe("RailwayApiError");
+  if (error._tag === "RailwayApiError") {
+    expect(error.operation).toBe("DeleteService");
+  }
 });

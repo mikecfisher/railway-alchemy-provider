@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -24,7 +28,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: 20.19.5
           package-manager-cache: false
 
       - name: Install dependencies
@@ -32,6 +36,9 @@ jobs:
 
       - name: Check package
         run: bun run check
+
+      - name: Audit dependencies
+        run: bun audit
 
       - name: Smoke-test Node.js import
         run: node --input-type=module --eval 'await Promise.all([import("./dist/index.js"), import("./dist/testing.js")])'
