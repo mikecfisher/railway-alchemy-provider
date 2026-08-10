@@ -74,7 +74,7 @@
     "@types/bun": "1.3.14",
     "alchemy": "2.0.0-beta.65",
     "effect": "4.0.0-beta.102",
-    "publint": "0.3.22",
+    "publint": "0.3.23",
     "typescript": "7.0.2"
   }
 }
